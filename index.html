@@ -231,6 +231,21 @@
       opacity: 0.7;
     }
 
+    #gps-debug {
+      position: absolute;
+      left: 8px;
+      bottom: 32px;
+      z-index: 20;
+
+      padding: 5px 8px;
+      background: rgba(0,0,0,0.72);
+      color: rgba(255,255,255,0.78);
+      border-radius: 8px;
+      font-size: 10px;
+      line-height: 1.2;
+      pointer-events: none;
+    }
+
     #build {
       position: absolute;
       left: 8px;
@@ -314,8 +329,10 @@
     </div>
   </div>
 
+  <div id="gps-debug">GPS: A0 · W0 · J0 · C0</div>
+
   <div id="build">
-    v0.10
+    v0.11
   </div>
 
 
@@ -329,8 +346,8 @@
     const STORAGE_KEY_V2 =
       "life-explorer-sessions-v2";
 
-    const REVEAL_RADIUS_METERS = 50;
-    const MIN_POINT_DISTANCE_METERS = 8;
+    const REVEAL_RADIUS_METERS = 35;
+    const MIN_POINT_DISTANCE_METERS = 5;
     const MAX_GPS_ACCURACY_METERS = 50;
     const MAX_CONNECTED_DISTANCE_METERS = 120;
     const SESSION_GAP_MS = 30 * 60 * 1000;
@@ -345,6 +362,13 @@
     const RELOCATION_MIN_SPAN_MS = 3000;
 
     let relocationCandidate = [];
+
+    const gpsDiagnostics = {
+      accepted: 0,
+      weak: 0,
+      suspicious: 0,
+      tooClose: 0
+    };
 
     let sessions = loadSessions();
 
@@ -389,6 +413,9 @@
 
     const resetButton =
       document.getElementById("reset");
+
+    const gpsDebugEl =
+      document.getElementById("gps-debug");
 
     let noisePattern = null;
     let watchId = null;
@@ -1286,6 +1313,20 @@
 
 
     // ---------------------------------
+    // GPS DIAGNOSTICS
+    // ---------------------------------
+
+    function updateGpsDebug() {
+      gpsDebugEl.textContent =
+        `GPS: A${gpsDiagnostics.accepted} · W${gpsDiagnostics.weak} · J${gpsDiagnostics.suspicious} · C${gpsDiagnostics.tooClose}`;
+    }
+
+    function markGpsDiagnostic(type) {
+      gpsDiagnostics[type] += 1;
+      updateGpsDebug();
+    }
+
+    // ---------------------------------
     // STATUS
     // ---------------------------------
 
@@ -1418,6 +1459,8 @@
         accuracy >
         MAX_GPS_ACCURACY_METERS
       ) {
+        markGpsDiagnostic("weak");
+
         showStatus(
           `Слабый GPS ±${Math.round(accuracy)} м · ждём точный сигнал`
         );
@@ -1445,6 +1488,8 @@
       let lastPoint = getLastPoint(session);
 
       if (isSuspiciousJump(lastPoint, point)) {
+        markGpsDiagnostic("suspicious");
+
         relocationCandidate.push(point);
         relocationCandidate =
           relocationCandidate.slice(
@@ -1463,6 +1508,10 @@
         const confirmedPoint =
           acceptRelocationCandidate();
 
+        gpsDiagnostics.accepted +=
+          RELOCATION_CONFIRM_POINTS;
+        updateGpsDebug();
+
         session = getCurrentSession();
         lastPoint = confirmedPoint;
       } else {
@@ -1477,6 +1526,9 @@
           session.points.push(point);
           saveSessions();
           lastPoint = point;
+          markGpsDiagnostic("accepted");
+        } else {
+          markGpsDiagnostic("tooClose");
         }
       }
 
