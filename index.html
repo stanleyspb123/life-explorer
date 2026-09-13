@@ -22,13 +22,14 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #000;
+      background: #111;
       font-family: Arial, sans-serif;
     }
 
     #map {
       position: absolute;
       inset: 0;
+      background: #ddd;
     }
 
     #noise {
@@ -47,24 +48,40 @@
       transform: translateX(-50%);
       z-index: 20;
 
-      max-width: 76vw;
-      padding: 9px 15px;
+      max-width: 70vw;
+      padding: 10px 16px;
 
-      background: rgba(10, 10, 10, 0.88);
+      background: rgba(10,10,10,0.9);
       color: white;
 
       border-radius: 22px;
 
-      font-size: 13px;
+      font-size: 14px;
       line-height: 1.3;
       text-align: center;
 
-      opacity: 0;
-      transition: opacity 0.25s ease;
+      display: none;
     }
 
     #status.visible {
-      opacity: 1;
+      display: block;
+    }
+
+    #reset {
+      position: absolute;
+      top: max(18px, env(safe-area-inset-top));
+      right: 14px;
+      z-index: 20;
+
+      border: 0;
+      border-radius: 18px;
+
+      padding: 10px 13px;
+
+      background: rgba(10,10,10,0.9);
+      color: white;
+
+      font-size: 13px;
     }
 
     #start-screen {
@@ -80,34 +97,30 @@
     }
 
     #start-gps {
-      pointer-events: auto;
+      width: 210px;
+      height: 210px;
 
-      width: 220px;
-      height: 220px;
-
-      border: 2px solid rgba(255,255,255,0.75);
       border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.85);
 
-      background: rgba(5,5,5,0.92);
+      background: rgba(8,8,8,0.94);
       color: white;
 
-      box-shadow:
-        0 0 0 12px rgba(255,255,255,0.08),
-        0 12px 40px rgba(0,0,0,0.5);
-
-      font-size: 19px;
-      font-weight: 600;
+      pointer-events: auto;
 
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
 
-      gap: 11px;
+      gap: 10px;
 
-      cursor: pointer;
+      font-size: 20px;
+      font-weight: 600;
 
-      -webkit-tap-highlight-color: transparent;
+      box-shadow:
+        0 0 0 12px rgba(255,255,255,0.08),
+        0 15px 45px rgba(0,0,0,0.5);
     }
 
     #start-gps:active {
@@ -115,35 +128,33 @@
     }
 
     #gps-icon {
-      font-size: 42px;
-      line-height: 1;
+      font-size: 44px;
     }
 
     #gps-subtitle {
       font-size: 12px;
-      font-weight: 400;
+      font-weight: normal;
       opacity: 0.7;
     }
 
-    #reset {
+    #build {
       position: absolute;
-      right: 14px;
-      top: max(18px, env(safe-area-inset-top));
+      left: 8px;
+      bottom: 8px;
       z-index: 20;
 
-      border: 0;
-      border-radius: 18px;
+      padding: 4px 7px;
 
-      padding: 9px 12px;
+      background: rgba(0,0,0,0.7);
+      color: rgba(255,255,255,0.65);
 
-      background: rgba(10,10,10,0.88);
-      color: white;
+      border-radius: 8px;
 
-      font-size: 12px;
+      font-size: 10px;
     }
 
     .maplibregl-ctrl-bottom-right {
-      bottom: 16px;
+      bottom: 18px;
     }
   </style>
 </head>
@@ -170,6 +181,10 @@
     Сбросить
   </button>
 
+  <div id="build">
+    v0.7
+  </div>
+
 
   <script src="https://unpkg.com/maplibre-gl@5.7.1/dist/maplibre-gl.js"></script>
 
@@ -180,17 +195,23 @@
 
     const REVEAL_RADIUS_METERS = 50;
 
-    // Пишем GPS чаще,
-    // чтобы след был плавнее.
     const MIN_POINT_DISTANCE_METERS = 8;
 
-    let exploredPoints = loadPoints();
+    const MAX_GPS_ACCURACY_METERS = 50;
 
-    const noiseCanvas =
+    const MAX_CONNECTED_DISTANCE_METERS = 120;
+
+
+    let exploredPoints =
+      loadPoints();
+
+
+    const canvas =
       document.getElementById("noise");
 
-    const noiseCtx =
-      noiseCanvas.getContext("2d");
+    const ctx =
+      canvas.getContext("2d");
+
 
     const statusEl =
       document.getElementById("status");
@@ -198,48 +219,76 @@
     const startScreen =
       document.getElementById("start-screen");
 
-    const startGps =
+    const startButton =
       document.getElementById("start-gps");
+
+    const gpsSubtitle =
+      document.getElementById("gps-subtitle");
 
     const resetButton =
       document.getElementById("reset");
 
 
-    // -------------------------
+    let noisePattern = null;
+
+    let watchId = null;
+
+    let mapReady = false;
+
+
+    // ---------------------------------
     // STORAGE
-    // -------------------------
+    // ---------------------------------
 
     function loadPoints() {
+
       try {
+
         const raw =
-          localStorage.getItem(STORAGE_KEY);
+          localStorage.getItem(
+            STORAGE_KEY
+          );
 
-        if (!raw) return [];
+        if (!raw) {
+          return [];
+        }
 
-        const data =
+        const parsed =
           JSON.parse(raw);
 
-        return Array.isArray(data)
-          ? data
-          : [];
+        if (!Array.isArray(parsed)) {
+          return [];
+        }
+
+        return parsed.filter(
+          point =>
+            Array.isArray(point) &&
+            point.length >= 2 &&
+            Number.isFinite(point[0]) &&
+            Number.isFinite(point[1])
+        );
 
       } catch {
+
         return [];
       }
     }
 
 
     function savePoints() {
+
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify(exploredPoints)
+        JSON.stringify(
+          exploredPoints
+        )
       );
     }
 
 
-    // -------------------------
+    // ---------------------------------
     // MAP
-    // -------------------------
+    // ---------------------------------
 
     const map =
       new maplibregl.Map({
@@ -291,11 +340,14 @@
     );
 
 
-    // -------------------------
+    // ---------------------------------
     // DISTANCE
-    // -------------------------
+    // ---------------------------------
 
-    function distanceMeters(a, b) {
+    function distanceMeters(
+      a,
+      b
+    ) {
 
       const R = 6371000;
 
@@ -306,100 +358,125 @@
         b[1] * Math.PI / 180;
 
       const dLat =
-        (b[1] - a[1]) *
+        (
+          b[1] - a[1]
+        ) *
         Math.PI / 180;
 
       const dLon =
-        (b[0] - a[0]) *
+        (
+          b[0] - a[0]
+        ) *
         Math.PI / 180;
 
+
       const h =
-        Math.sin(dLat / 2) ** 2 +
+        Math.sin(
+          dLat / 2
+        ) ** 2 +
+
         Math.cos(lat1) *
         Math.cos(lat2) *
-        Math.sin(dLon / 2) ** 2;
+
+        Math.sin(
+          dLon / 2
+        ) ** 2;
+
 
       return (
         2 *
         R *
-        Math.asin(Math.sqrt(h))
+        Math.asin(
+          Math.sqrt(h)
+        )
       );
     }
 
 
-    // -------------------------
-    // STATIC NOISE
-    // -------------------------
-
-    let noisePattern = null;
-
+    // ---------------------------------
+    // NOISE
+    // ---------------------------------
 
     function createNoisePattern() {
 
       const size = 180;
 
-      const offscreen =
-        document.createElement("canvas");
+      const source =
+        document.createElement(
+          "canvas"
+        );
 
-      offscreen.width = size;
-      offscreen.height = size;
+      source.width = size;
+      source.height = size;
 
-      const ctx =
-        offscreen.getContext("2d");
+
+      const sourceCtx =
+        source.getContext("2d");
+
 
       const image =
-        ctx.createImageData(
+        sourceCtx.createImageData(
           size,
           size
         );
 
-      const data =
-        image.data;
-
 
       for (
         let i = 0;
-        i < data.length;
+        i < image.data.length;
         i += 4
       ) {
 
         const value =
           Math.random() > 0.5
-            ? 235
-            : 15;
+            ? 225
+            : 25;
 
-        data[i] = value;
-        data[i + 1] = value;
-        data[i + 2] = value;
 
-        data[i + 3] = 255;
+        image.data[i] =
+          value;
+
+        image.data[i + 1] =
+          value;
+
+        image.data[i + 2] =
+          value;
+
+        image.data[i + 3] =
+          255;
       }
 
-      ctx.putImageData(
+
+      sourceCtx.putImageData(
         image,
         0,
         0
       );
 
+
       noisePattern =
-        noiseCtx.createPattern(
-          offscreen,
+        ctx.createPattern(
+          source,
           "repeat"
         );
     }
 
 
-    function resizeNoiseCanvas() {
+    function resizeCanvas() {
 
-      noiseCanvas.width =
+      canvas.width =
         window.innerWidth;
 
-      noiseCanvas.height =
+      canvas.height =
         window.innerHeight;
 
-      drawNoise();
+      drawFog();
     }
 
+
+    // ---------------------------------
+    // METERS → PIXELS
+    // ---------------------------------
 
     function metersToPixels(
       meters,
@@ -419,6 +496,7 @@
           map.getZoom()
         );
 
+
       return (
         meters /
         metersPerPixel
@@ -426,9 +504,9 @@
     }
 
 
-    // -------------------------
-    // REVEAL HELPERS
-    // -------------------------
+    // ---------------------------------
+    // ERASE
+    // ---------------------------------
 
     function eraseCircle(
       x,
@@ -436,37 +514,20 @@
       radius
     ) {
 
-      const gradient =
-        noiseCtx.createRadialGradient(
-          x,
-          y,
-          radius * 0.82,
-          x,
-          y,
-          radius
-        );
+      ctx.save();
 
-      gradient.addColorStop(
-        0,
-        "rgba(0,0,0,1)"
-      );
+      ctx.globalCompositeOperation =
+        "destination-out";
 
-      gradient.addColorStop(
-        0.75,
-        "rgba(0,0,0,1)"
-      );
+      ctx.globalAlpha = 1;
 
-      gradient.addColorStop(
-        1,
-        "rgba(0,0,0,0)"
-      );
+      ctx.fillStyle =
+        "#000";
 
-      noiseCtx.fillStyle =
-        gradient;
 
-      noiseCtx.beginPath();
+      ctx.beginPath();
 
-      noiseCtx.arc(
+      ctx.arc(
         x,
         y,
         radius,
@@ -474,148 +535,196 @@
         Math.PI * 2
       );
 
-      noiseCtx.fill();
+      ctx.fill();
+
+      ctx.restore();
     }
 
 
-    function eraseCapsule(
+    function eraseCorridor(
       p1,
       p2,
       radius
     ) {
 
-      const dx =
-        p2.x - p1.x;
+      ctx.save();
 
-      const dy =
-        p2.y - p1.y;
+      ctx.globalCompositeOperation =
+        "destination-out";
 
-      const length =
-        Math.sqrt(
-          dx * dx +
-          dy * dy
-        );
+      ctx.globalAlpha = 1;
 
-      if (length < 1) {
-        eraseCircle(
-          p1.x,
-          p1.y,
-          radius
-        );
+      ctx.strokeStyle =
+        "#000";
 
-        return;
-      }
+      ctx.lineWidth =
+        radius * 2;
 
-      const nx =
-        -dy / length;
+      ctx.lineCap =
+        "round";
 
-      const ny =
-        dx / length;
+      ctx.lineJoin =
+        "round";
 
-      noiseCtx.beginPath();
 
-      noiseCtx.moveTo(
-        p1.x + nx * radius,
-        p1.y + ny * radius
-      );
+      ctx.beginPath();
 
-      noiseCtx.lineTo(
-        p2.x + nx * radius,
-        p2.y + ny * radius
-      );
-
-      noiseCtx.arc(
-        p2.x,
-        p2.y,
-        radius,
-        Math.atan2(ny, nx),
-        Math.atan2(-ny, -nx)
-      );
-
-      noiseCtx.lineTo(
-        p1.x - nx * radius,
-        p1.y - ny * radius
-      );
-
-      noiseCtx.arc(
+      ctx.moveTo(
         p1.x,
-        p1.y,
-        radius,
-        Math.atan2(-ny, -nx),
-        Math.atan2(ny, nx)
+        p1.y
       );
 
-      noiseCtx.closePath();
+      ctx.lineTo(
+        p2.x,
+        p2.y
+      );
 
-      noiseCtx.fillStyle =
-        "rgba(0,0,0,1)";
+      ctx.stroke();
 
-      noiseCtx.fill();
+      ctx.restore();
     }
 
 
-    // -------------------------
+    // ---------------------------------
     // DRAW FOG
-    // -------------------------
+    // ---------------------------------
 
-    function drawNoise() {
+    function drawFog() {
 
-      const width =
-        noiseCanvas.width;
+      if (
+        !noisePattern ||
+        !mapReady
+      ) {
+        return;
+      }
 
-      const height =
-        noiseCanvas.height;
 
-      noiseCtx.clearRect(
+      ctx.save();
+
+      ctx.globalCompositeOperation =
+        "source-over";
+
+      ctx.globalAlpha = 1;
+
+
+      ctx.clearRect(
         0,
         0,
-        width,
-        height
+        canvas.width,
+        canvas.height
       );
 
 
-      noiseCtx.fillStyle =
+      ctx.fillStyle =
         noisePattern;
 
-      noiseCtx.fillRect(
+      ctx.fillRect(
         0,
         0,
-        width,
-        height
+        canvas.width,
+        canvas.height
       );
 
 
-      // Немного приглушаем шум
+      // слегка приглушаем белый шум
 
-      noiseCtx.fillStyle =
-        "rgba(0,0,0,0.32)";
+      ctx.fillStyle =
+        "rgba(0,0,0,0.20)";
 
-      noiseCtx.fillRect(
+      ctx.fillRect(
         0,
         0,
-        width,
-        height
+        canvas.width,
+        canvas.height
       );
 
-
-      noiseCtx.globalCompositeOperation =
-        "destination-out";
+      ctx.restore();
 
 
       if (
-        exploredPoints.length === 1
+        exploredPoints.length === 0
+      ) {
+        return;
+      }
+
+
+      // Сначала раскрываем каждую точку.
+
+      exploredPoints.forEach(
+        point => {
+
+          const screen =
+            map.project(point);
+
+          const radius =
+            metersToPixels(
+              REVEAL_RADIUS_METERS,
+              point[1]
+            );
+
+
+          eraseCircle(
+            screen.x,
+            screen.y,
+            radius
+          );
+        }
+      );
+
+
+      // Потом соединяем только
+      // адекватно близкие точки.
+
+      for (
+        let i = 1;
+        i < exploredPoints.length;
+        i++
       ) {
 
-        const [
-          longitude,
-          latitude
-        ] = exploredPoints[0];
+        const previous =
+          exploredPoints[
+            i - 1
+          ];
 
-        const point =
-          map.project([
-            longitude,
-            latitude
-          ]);
+        const current =
+          exploredPoints[i];
+
+
+        const distance =
+          distanceMeters(
+            previous,
+            current
+          );
+
+
+        // GPS-прыжок.
+        // Не рисуем линию через полгорода.
+
+        if (
+          distance >
+          MAX_CONNECTED_DISTANCE_METERS
+        ) {
+          continue;
+        }
+
+
+        const p1 =
+          map.project(
+            previous
+          );
+
+        const p2 =
+          map.project(
+            current
+          );
+
+
+        const latitude =
+          (
+            previous[1] +
+            current[1]
+          ) / 2;
+
 
         const radius =
           metersToPixels(
@@ -623,113 +732,49 @@
             latitude
           );
 
-        eraseCircle(
-          point.x,
-          point.y,
+
+        eraseCorridor(
+          p1,
+          p2,
           radius
         );
       }
-
-
-      if (
-        exploredPoints.length >= 2
-      ) {
-
-        for (
-          let i = 1;
-          i < exploredPoints.length;
-          i++
-        ) {
-
-          const prev =
-            exploredPoints[i - 1];
-
-          const current =
-            exploredPoints[i];
-
-
-          const p1 =
-            map.project(prev);
-
-          const p2 =
-            map.project(current);
-
-
-          const latitude =
-            (
-              prev[1] +
-              current[1]
-            ) / 2;
-
-
-          const radius =
-            metersToPixels(
-              REVEAL_RADIUS_METERS,
-              latitude
-            );
-
-
-          eraseCapsule(
-            p1,
-            p2,
-            radius
-          );
-
-
-          // Круги по краям помогают
-          // сделать переходы мягче
-
-          eraseCircle(
-            p1.x,
-            p1.y,
-            radius
-          );
-
-          eraseCircle(
-            p2.x,
-            p2.y,
-            radius
-          );
-        }
-      }
-
-
-      noiseCtx.globalCompositeOperation =
-        "source-over";
     }
 
 
-    // -------------------------
-    // GEOLOCATION
-    // -------------------------
-
-    const geolocate =
-      new maplibregl.GeolocateControl({
-
-        positionOptions: {
-          enableHighAccuracy: true
-        },
-
-        trackUserLocation: true,
-
-        showUserHeading: true,
-
-        showAccuracyCircle: true
-      });
-
+    // ---------------------------------
+    // GPS
+    // ---------------------------------
 
     function handlePosition(
       position
     ) {
 
-      const latitude =
-        position.coords.latitude;
+      const {
+        latitude,
+        longitude,
+        accuracy
+      } =
+        position.coords;
 
-      const longitude =
-        position.coords.longitude;
 
-      const accuracy =
-        position.coords.accuracy;
+      statusEl.classList.add(
+        "visible"
+      );
+
+
+      // Слишком плохой сигнал.
+
+      if (
+        accuracy >
+        MAX_GPS_ACCURACY_METERS
+      ) {
+
+        statusEl.textContent =
+          `Слабый GPS ±${Math.round(accuracy)} м`;
+
+        return;
+      }
 
 
       const point = [
@@ -765,11 +810,6 @@
         "none";
 
 
-      statusEl.classList.add(
-        "visible"
-      );
-
-
       statusEl.textContent =
         `GPS ±${Math.round(accuracy)} м`;
 
@@ -787,32 +827,21 @@
             16.5
           ),
 
-        duration: 700
+        duration: 600
       });
 
 
-      drawNoise();
+      drawFog();
     }
 
 
-    // -------------------------
-    // BIG GPS BUTTON
-    // -------------------------
+    // ---------------------------------
+    // START GPS
+    // ---------------------------------
 
-    let watchId = null;
-
-
-    startGps.addEventListener(
+    startButton.addEventListener(
       "click",
       () => {
-
-        startGps.disabled = true;
-
-        document.getElementById(
-          "gps-subtitle"
-        ).textContent =
-          "Определяем местоположение…";
-
 
         if (
           !navigator.geolocation
@@ -823,12 +852,18 @@
           );
 
           statusEl.textContent =
-            "GPS не поддерживается браузером";
-
-          startGps.disabled = false;
+            "GPS не поддерживается";
 
           return;
         }
+
+
+        startButton.disabled =
+          true;
+
+
+        gpsSubtitle.textContent =
+          "Ищем спутники…";
 
 
         watchId =
@@ -838,48 +873,61 @@
 
             error => {
 
+              console.error(
+                error
+              );
+
+
               statusEl.classList.add(
                 "visible"
               );
 
+
               statusEl.textContent =
-                "Не удалось получить GPS";
+                "Не удалось определить местоположение";
 
-              startGps.disabled = false;
 
-              document.getElementById(
-                "gps-subtitle"
-              ).textContent =
+              startButton.disabled =
+                false;
+
+
+              gpsSubtitle.textContent =
                 "Попробовать ещё раз";
             },
 
             {
               enableHighAccuracy: true,
-              maximumAge: 2000,
-              timeout: 15000
+
+              maximumAge: 1000,
+
+              timeout: 20000
             }
           );
       }
     );
 
 
-    // -------------------------
+    // ---------------------------------
     // RESET
-    // -------------------------
+    // ---------------------------------
 
     resetButton.addEventListener(
       "click",
       () => {
 
-        const ok =
+        const confirmed =
           confirm(
             "Удалить всю исследованную территорию?"
           );
 
-        if (!ok) return;
+
+        if (!confirmed) {
+          return;
+        }
 
 
         exploredPoints = [];
+
 
         localStorage.removeItem(
           STORAGE_KEY
@@ -888,17 +936,18 @@
 
         createNoisePattern();
 
-        drawNoise();
+        drawFog();
 
 
         startScreen.style.display =
           "flex";
 
-        startGps.disabled = false;
 
-        document.getElementById(
-          "gps-subtitle"
-        ).textContent =
+        startButton.disabled =
+          false;
+
+
+        gpsSubtitle.textContent =
           "Начать исследование";
 
 
@@ -909,38 +958,40 @@
     );
 
 
-    // -------------------------
-    // EVENTS
-    // -------------------------
+    // ---------------------------------
+    // MAP EVENTS
+    // ---------------------------------
 
     map.on(
       "load",
       () => {
 
+        mapReady = true;
+
         createNoisePattern();
 
-        resizeNoiseCanvas();
+        resizeCanvas();
 
-        drawNoise();
+        drawFog();
       }
     );
 
 
     map.on(
       "move",
-      drawNoise
+      drawFog
     );
 
 
     map.on(
       "zoom",
-      drawNoise
+      drawFog
     );
 
 
     window.addEventListener(
       "resize",
-      resizeNoiseCanvas
+      resizeCanvas
     );
 
   </script>
