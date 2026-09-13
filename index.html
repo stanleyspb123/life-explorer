@@ -59,11 +59,18 @@
     const map = new maplibregl.Map({
       container: "map",
 
-      style: "https://tiles.openfreemap.org/styles/liberty",
+      style: "https://tiles.openfreemap.org/styles/positron",
 
       center: [30.3158, 59.9391],
 
       zoom: 12
+    });
+
+    map.on("error", (event) => {
+      console.error("Map error:", event.error);
+
+      document.getElementById("status").textContent =
+        "Ошибка загрузки карты";
     });
 
     map.addControl(
