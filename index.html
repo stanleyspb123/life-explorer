@@ -2,9 +2,10 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
+
   <meta
     name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=1.0"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
   >
 
   <title>Life Explorer</title>
@@ -15,13 +16,15 @@
   >
 
   <style>
-    html, body {
+    html,
+    body {
       margin: 0;
       padding: 0;
       width: 100%;
       height: 100%;
       overflow: hidden;
       font-family: Arial, sans-serif;
+      background: #07090c;
     }
 
     #map {
@@ -31,19 +34,31 @@
 
     #status {
       position: absolute;
-      top: 20px;
+      top: max(20px, env(safe-area-inset-top));
       left: 50%;
       transform: translateX(-50%);
       z-index: 10;
 
-      background: rgba(20, 20, 20, 0.9);
-      color: white;
+      max-width: 85vw;
 
       padding: 10px 16px;
+
+      background: rgba(20, 20, 20, 0.92);
+      color: white;
+
       border-radius: 20px;
 
-      font-size: 14px;
-      white-space: nowrap;
+      font-size: 13px;
+      line-height: 1.3;
+
+      text-align: center;
+      white-space: normal;
+
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+    }
+
+    .maplibregl-ctrl-bottom-right {
+      bottom: 20px;
     }
   </style>
 </head>
@@ -51,28 +66,46 @@
 <body>
 
   <div id="map"></div>
-  <div id="status">Life Explorer</div>
+
+  <div id="status">
+    Загружаем карту…
+  </div>
 
   <script src="https://unpkg.com/maplibre-gl@5.7.1/dist/maplibre-gl.js"></script>
 
   <script>
-    const status = document.getElementById("status");
+    const statusEl = document.getElementById("status");
+
+    const REVEAL_RADIUS_METERS = 50;
+    const MIN_POINT_DISTANCE_METERS = 15;
+
+    const exploredPoints = [];
+
+    // -----------------------------
+    // MAP
+    // -----------------------------
 
     const map = new maplibregl.Map({
       container: "map",
 
       style: {
         version: 8,
+
         sources: {
           osm: {
             type: "raster",
+
             tiles: [
               "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
             ],
+
             tileSize: 256,
-            attribution: "© OpenStreetMap contributors"
+
+            attribution:
+              "© OpenStreetMap contributors"
           }
         },
+
         layers: [
           {
             id: "osm",
@@ -84,44 +117,28 @@
 
       center: [30.3158, 59.9391],
 
-      zoom: 12
-    });
-
-    map.on("error", (event) => {
-      console.error("Map error:", event.error);
-
-      const errorText =
-        event?.error?.message ||
-        event?.error?.statusText ||
-        String(event?.error || "Unknown error");
-
-      const status = document.getElementById("status");
-
-      status.textContent = "MAP ERROR: " + errorText;
-      status.style.whiteSpace = "normal";
-      status.style.maxWidth = "85vw";
-      status.style.textAlign = "center";
-      status.style.fontSize = "12px";
+      zoom: 15
     });
 
 
-    // ------------------------------
-    // FOG OF WAR
-    // ------------------------------
-
-    const REVEAL_RADIUS_METERS = 50;
-    const MIN_POINT_DISTANCE_METERS = 15;
-
-    const exploredPoints = [];
+    // -----------------------------
+    // DISTANCE
+    // -----------------------------
 
     function distanceMeters(a, b) {
       const R = 6371000;
 
-      const lat1 = a[1] * Math.PI / 180;
-      const lat2 = b[1] * Math.PI / 180;
+      const lat1 =
+        a[1] * Math.PI / 180;
 
-      const dLat = (b[1] - a[1]) * Math.PI / 180;
-      const dLon = (b[0] - a[0]) * Math.PI / 180;
+      const lat2 =
+        b[1] * Math.PI / 180;
+
+      const dLat =
+        (b[1] - a[1]) * Math.PI / 180;
+
+      const dLon =
+        (b[0] - a[0]) * Math.PI / 180;
 
       const h =
         Math.sin(dLat / 2) ** 2 +
@@ -129,29 +146,68 @@
         Math.cos(lat2) *
         Math.sin(dLon / 2) ** 2;
 
-      return 2 * R * Math.asin(Math.sqrt(h));
+      return (
+        2 *
+        R *
+        Math.asin(Math.sqrt(h))
+      );
     }
 
-    function makeCircleHole(lon, lat, radiusMeters, steps = 48) {
+
+    // -----------------------------
+    // CREATE CIRCLE
+    // -----------------------------
+
+    function makeCircleHole(
+      longitude,
+      latitude,
+      radiusMeters,
+      steps = 64
+    ) {
       const ring = [];
 
-      const latRadius = radiusMeters / 111320;
+      const latRadius =
+        radiusMeters / 111320;
+
       const lonRadius =
         radiusMeters /
-        (111320 * Math.cos(lat * Math.PI / 180));
+        (
+          111320 *
+          Math.cos(
+            latitude *
+            Math.PI /
+            180
+          )
+        );
 
-      for (let i = 0; i <= steps; i++) {
-        const angle = (i / steps) * Math.PI * 2;
+      for (
+        let i = 0;
+        i <= steps;
+        i++
+      ) {
+        const angle =
+          (i / steps) *
+          Math.PI *
+          2;
 
         ring.push([
-          lon + Math.cos(angle) * lonRadius,
-          lat + Math.sin(angle) * latRadius
+          longitude +
+            Math.cos(angle) *
+            lonRadius,
+
+          latitude +
+            Math.sin(angle) *
+            latRadius
         ]);
       }
 
-      // Отверстия полигона должны идти в обратном направлении.
       return ring.reverse();
     }
+
+
+    // -----------------------------
+    // BUILD FOG
+    // -----------------------------
 
     function buildFogGeoJSON() {
       const world = [
@@ -162,19 +218,24 @@
         [-180, -85]
       ];
 
-      const holes = exploredPoints.map(([lon, lat]) =>
-        makeCircleHole(
-          lon,
-          lat,
-          REVEAL_RADIUS_METERS
-        )
-      );
+      const holes =
+        exploredPoints.map(
+          ([longitude, latitude]) =>
+            makeCircleHole(
+              longitude,
+              latitude,
+              REVEAL_RADIUS_METERS
+            )
+        );
 
       return {
         type: "Feature",
+
         properties: {},
+
         geometry: {
           type: "Polygon",
+
           coordinates: [
             world,
             ...holes
@@ -183,69 +244,163 @@
       };
     }
 
-    function updateFog() {
-      const source = map.getSource("fog");
 
-      if (source) {
-        source.setData(buildFogGeoJSON());
+    // -----------------------------
+    // UPDATE FOG
+    // -----------------------------
+
+    function updateFog() {
+      const source =
+        map.getSource("fog");
+
+      if (!source) {
+        return;
       }
+
+      source.setData(
+        buildFogGeoJSON()
+      );
     }
+
+
+    // -----------------------------
+    // MAP CONTROLS
+    // -----------------------------
 
     map.addControl(
       new maplibregl.NavigationControl(),
       "bottom-right"
     );
 
-    const geolocate = new maplibregl.GeolocateControl({
-      positionOptions: {
-        enableHighAccuracy: true
-      },
-      trackUserLocation: true,
-      showUserHeading: true
-    });
 
-    map.addControl(geolocate, "bottom-right");
+    // -----------------------------
+    // GPS
+    // -----------------------------
 
-    geolocate.on("geolocate", (event) => {
-      const latitude = event.coords.latitude;
-      const longitude = event.coords.longitude;
+    const geolocate =
+      new maplibregl.GeolocateControl({
+        positionOptions: {
+          enableHighAccuracy: true
+        },
 
-      const point = [longitude, latitude];
+        trackUserLocation: true,
 
-      const lastPoint =
-        exploredPoints[exploredPoints.length - 1];
-
-      if (
-        !lastPoint ||
-        distanceMeters(lastPoint, point) >= MIN_POINT_DISTANCE_METERS
-      ) {
-        exploredPoints.push(point);
-        updateFog();
-      }
-
-      document.getElementById("status").textContent =
-        `Открыто точек: ${exploredPoints.length} · GPS ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-    });
-
-    map.on("load", () => {
-      map.addSource("fog", {
-        type: "geojson",
-        data: buildFogGeoJSON()
+        showUserHeading: true
       });
 
-      map.addLayer({
-        id: "fog-layer",
-        type: "fill",
-        source: "fog",
-        paint: {
-          "fill-color": "#07090c",
-          "fill-opacity": 0.82
+    map.addControl(
+      geolocate,
+      "bottom-right"
+    );
+
+
+    geolocate.on(
+      "geolocate",
+      (event) => {
+
+        const latitude =
+          event.coords.latitude;
+
+        const longitude =
+          event.coords.longitude;
+
+        const accuracy =
+          event.coords.accuracy;
+
+        const point = [
+          longitude,
+          latitude
+        ];
+
+        const lastPoint =
+          exploredPoints[
+            exploredPoints.length - 1
+          ];
+
+        if (
+          !lastPoint ||
+          distanceMeters(
+            lastPoint,
+            point
+          ) >=
+            MIN_POINT_DISTANCE_METERS
+        ) {
+          exploredPoints.push(point);
+
+          updateFog();
         }
-      });
 
-      document.getElementById("status").textContent =
-        "Нажми GPS, чтобы начать исследование";
-    });
+        statusEl.textContent =
+          `Исследовано точек: ${exploredPoints.length} · GPS ±${Math.round(accuracy)} м`;
+      }
+    );
+
+
+    geolocate.on(
+      "error",
+      (error) => {
+
+        statusEl.textContent =
+          "Ошибка GPS: " +
+          error.message;
+      }
+    );
+
+
+    // -----------------------------
+    // MAP LOADED
+    // -----------------------------
+
+    map.on(
+      "load",
+      () => {
+
+        map.addSource(
+          "fog",
+          {
+            type: "geojson",
+
+            data:
+              buildFogGeoJSON()
+          }
+        );
+
+        map.addLayer({
+          id: "fog-layer",
+
+          type: "fill",
+
+          source: "fog",
+
+          paint: {
+            "fill-color":
+              "#07090c",
+
+            "fill-opacity":
+              0.88
+          }
+        });
+
+        statusEl.textContent =
+          "Нажми кнопку GPS и начни исследование";
+      }
+    );
+
+
+    // -----------------------------
+    // MAP ERRORS
+    // -----------------------------
+
+    map.on(
+      "error",
+      (event) => {
+
+        console.error(
+          "Map error:",
+          event.error
+        );
+      }
+    );
   </script>
 
 </body>
