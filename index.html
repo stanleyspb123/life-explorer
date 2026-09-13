@@ -19,12 +19,11 @@
     html,
     body {
       margin: 0;
-      padding: 0;
       width: 100%;
       height: 100%;
       overflow: hidden;
+      background: #000;
       font-family: Arial, sans-serif;
-      background: #07090c;
     }
 
     #map {
@@ -32,54 +31,124 @@
       inset: 0;
     }
 
+    #noise {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 5;
+      pointer-events: none;
+    }
+
     #status {
       position: absolute;
-      top: max(20px, env(safe-area-inset-top));
+      top: max(18px, env(safe-area-inset-top));
       left: 50%;
       transform: translateX(-50%);
-      z-index: 10;
+      z-index: 20;
 
-      max-width: 85vw;
-
+      max-width: 82vw;
       padding: 10px 16px;
 
-      background: rgba(20, 20, 20, 0.92);
+      background: rgba(12, 12, 12, 0.9);
       color: white;
 
-      border-radius: 20px;
-
+      border-radius: 22px;
       font-size: 13px;
-      line-height: 1.3;
-
+      line-height: 1.35;
       text-align: center;
-      white-space: normal;
 
-      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+      box-shadow: 0 3px 16px rgba(0, 0, 0, 0.3);
+    }
+
+    #reset {
+      position: absolute;
+      top: max(18px, env(safe-area-inset-top));
+      right: 16px;
+      z-index: 20;
+
+      border: 0;
+      border-radius: 18px;
+
+      background: rgba(12, 12, 12, 0.9);
+      color: white;
+
+      padding: 9px 13px;
+      font-size: 12px;
     }
 
     .maplibregl-ctrl-bottom-right {
-      bottom: 20px;
+      bottom: 18px;
     }
   </style>
 </head>
 
 <body>
-
   <div id="map"></div>
+  <canvas id="noise"></canvas>
 
   <div id="status">
     Загружаем карту…
   </div>
 
+  <button id="reset">
+    Сбросить
+  </button>
+
   <script src="https://unpkg.com/maplibre-gl@5.7.1/dist/maplibre-gl.js"></script>
 
   <script>
-    const statusEl = document.getElementById("status");
+    const STORAGE_KEY = "life-explorer-points-v1";
 
     const REVEAL_RADIUS_METERS = 50;
     const MIN_POINT_DISTANCE_METERS = 15;
 
-    const exploredPoints = [];
+    const statusEl =
+      document.getElementById("status");
+
+    const resetButton =
+      document.getElementById("reset");
+
+    const noiseCanvas =
+      document.getElementById("noise");
+
+    const noiseCtx =
+      noiseCanvas.getContext("2d", {
+        alpha: true
+      });
+
+    let exploredPoints = loadPoints();
+
+    // -----------------------------
+    // STORAGE
+    // -----------------------------
+
+    function loadPoints() {
+      try {
+        const raw =
+          localStorage.getItem(STORAGE_KEY);
+
+        if (!raw) {
+          return [];
+        }
+
+        const parsed =
+          JSON.parse(raw);
+
+        return Array.isArray(parsed)
+          ? parsed
+          : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function savePoints() {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(exploredPoints)
+      );
+    }
 
     // -----------------------------
     // MAP
@@ -116,10 +185,8 @@
       },
 
       center: [30.3158, 59.9391],
-
       zoom: 15
     });
-
 
     // -----------------------------
     // DISTANCE
@@ -153,129 +220,213 @@
       );
     }
 
-
     // -----------------------------
-    // CREATE CIRCLE
+    // MAP -> SCREEN
     // -----------------------------
 
-    function makeCircleHole(
-      longitude,
-      latitude,
-      radiusMeters,
-      steps = 64
+    function getExploredScreenPoints() {
+      return exploredPoints.map(
+        ([lng, lat]) => {
+          const p =
+            map.project([lng, lat]);
+
+          return [p.x, p.y];
+        }
+      );
+    }
+
+    function metersToPixels(
+      meters,
+      latitude
     ) {
-      const ring = [];
+      const zoom =
+        map.getZoom();
 
-      const latRadius =
-        radiusMeters / 111320;
-
-      const lonRadius =
-        radiusMeters /
+      const metersPerPixel =
         (
-          111320 *
+          156543.03392 *
           Math.cos(
             latitude *
             Math.PI /
             180
           )
-        );
+        ) /
+        Math.pow(2, zoom);
 
-      for (
-        let i = 0;
-        i <= steps;
-        i++
-      ) {
-        const angle =
-          (i / steps) *
-          Math.PI *
-          2;
-
-        ring.push([
-          longitude +
-            Math.cos(angle) *
-            lonRadius,
-
-          latitude +
-            Math.sin(angle) *
-            latRadius
-        ]);
-      }
-
-      return ring.reverse();
+      return meters / metersPerPixel;
     }
 
-
     // -----------------------------
-    // BUILD FOG
+    // ANIMATED TV STATIC
     // -----------------------------
 
-    function buildFogGeoJSON() {
-      const world = [
-        [-180, -85],
-        [180, -85],
-        [180, 85],
-        [-180, 85],
-        [-180, -85]
-      ];
-
-      const holes =
-        exploredPoints.map(
-          ([longitude, latitude]) =>
-            makeCircleHole(
-              longitude,
-              latitude,
-              REVEAL_RADIUS_METERS
-            )
+    function resizeNoiseCanvas() {
+      const dpr =
+        Math.min(
+          window.devicePixelRatio || 1,
+          2
         );
 
-      return {
-        type: "Feature",
+      noiseCanvas.width =
+        Math.floor(
+          window.innerWidth * dpr
+        );
 
-        properties: {},
+      noiseCanvas.height =
+        Math.floor(
+          window.innerHeight * dpr
+        );
 
-        geometry: {
-          type: "Polygon",
+      noiseCanvas.style.width =
+        window.innerWidth + "px";
 
-          coordinates: [
-            world,
-            ...holes
-          ]
-        }
-      };
-    }
+      noiseCanvas.style.height =
+        window.innerHeight + "px";
 
-
-    // -----------------------------
-    // UPDATE FOG
-    // -----------------------------
-
-    function updateFog() {
-      const source =
-        map.getSource("fog");
-
-      if (!source) {
-        return;
-      }
-
-      source.setData(
-        buildFogGeoJSON()
+      noiseCtx.setTransform(
+        dpr,
+        0,
+        0,
+        dpr,
+        0,
+        0
       );
     }
 
+    function drawNoise() {
+      const width =
+        window.innerWidth;
+
+      const height =
+        window.innerHeight;
+
+      const blockSize = 3;
+
+      noiseCtx.clearRect(
+        0,
+        0,
+        width,
+        height
+      );
+
+      for (
+        let y = 0;
+        y < height;
+        y += blockSize
+      ) {
+        for (
+          let x = 0;
+          x < width;
+          x += blockSize
+        ) {
+          const value =
+            Math.random() > 0.5
+              ? 230
+              : 20;
+
+          noiseCtx.fillStyle =
+            `rgba(${value}, ${value}, ${value}, 0.82)`;
+
+          noiseCtx.fillRect(
+            x,
+            y,
+            blockSize,
+            blockSize
+          );
+        }
+      }
+
+      // Вырезаем исследованные зоны
+      noiseCtx.globalCompositeOperation =
+        "destination-out";
+
+      const screenPoints =
+        getExploredScreenPoints();
+
+      screenPoints.forEach(
+        ([x, y], index) => {
+          const latitude =
+            exploredPoints[index][1];
+
+          const radius =
+            metersToPixels(
+              REVEAL_RADIUS_METERS,
+              latitude
+            );
+
+          const gradient =
+            noiseCtx.createRadialGradient(
+              x,
+              y,
+              Math.max(
+                radius * 0.72,
+                1
+              ),
+              x,
+              y,
+              radius
+            );
+
+          gradient.addColorStop(
+            0,
+            "rgba(0,0,0,1)"
+          );
+
+          gradient.addColorStop(
+            0.8,
+            "rgba(0,0,0,1)"
+          );
+
+          gradient.addColorStop(
+            1,
+            "rgba(0,0,0,0)"
+          );
+
+          noiseCtx.fillStyle =
+            gradient;
+
+          noiseCtx.beginPath();
+
+          noiseCtx.arc(
+            x,
+            y,
+            radius,
+            0,
+            Math.PI * 2
+          );
+
+          noiseCtx.fill();
+        }
+      );
+
+      noiseCtx.globalCompositeOperation =
+        "source-over";
+    }
+
+    let lastNoiseFrame = 0;
+
+    function animateNoise(time) {
+      if (
+        time - lastNoiseFrame >
+        100
+      ) {
+        drawNoise();
+        lastNoiseFrame = time;
+      }
+
+      requestAnimationFrame(
+        animateNoise
+      );
+    }
 
     // -----------------------------
-    // MAP CONTROLS
+    // CONTROLS
     // -----------------------------
 
     map.addControl(
       new maplibregl.NavigationControl(),
       "bottom-right"
     );
-
-
-    // -----------------------------
-    // GPS
-    // -----------------------------
 
     const geolocate =
       new maplibregl.GeolocateControl({
@@ -293,11 +444,13 @@
       "bottom-right"
     );
 
+    // -----------------------------
+    // GPS
+    // -----------------------------
 
     geolocate.on(
       "geolocate",
       (event) => {
-
         const latitude =
           event.coords.latitude;
 
@@ -327,81 +480,91 @@
         ) {
           exploredPoints.push(point);
 
-          updateFog();
+          savePoints();
         }
 
         statusEl.textContent =
-          `Исследовано точек: ${exploredPoints.length} · GPS ±${Math.round(accuracy)} м`;
+          `Исследовано: ${exploredPoints.length} точек · GPS ±${Math.round(accuracy)} м`;
+
+        drawNoise();
       }
     );
-
 
     geolocate.on(
       "error",
       (error) => {
-
         statusEl.textContent =
           "Ошибка GPS: " +
           error.message;
       }
     );
 
+    // -----------------------------
+    // RESET
+    // -----------------------------
+
+    resetButton.addEventListener(
+      "click",
+      () => {
+        const ok =
+          confirm(
+            "Сбросить всю исследованную территорию?"
+          );
+
+        if (!ok) {
+          return;
+        }
+
+        exploredPoints = [];
+
+        localStorage.removeItem(
+          STORAGE_KEY
+        );
+
+        statusEl.textContent =
+          "Прогресс сброшен";
+
+        drawNoise();
+      }
+    );
 
     // -----------------------------
-    // MAP LOADED
+    // MAP EVENTS
     // -----------------------------
 
     map.on(
       "load",
       () => {
+        resizeNoiseCanvas();
 
-        map.addSource(
-          "fog",
-          {
-            type: "geojson",
+        drawNoise();
 
-            data:
-              buildFogGeoJSON()
-          }
-        );
-
-        map.addLayer({
-          id: "fog-layer",
-
-          type: "fill",
-
-          source: "fog",
-
-          paint: {
-            "fill-color":
-              "#07090c",
-
-            "fill-opacity":
-              0.88
-          }
-        });
+        animateNoise(0);
 
         statusEl.textContent =
-          "Нажми кнопку GPS и начни исследование";
+          exploredPoints.length
+            ? `Сохранено: ${exploredPoints.length} точек`
+            : "Нажми GPS, чтобы начать исследование";
       }
     );
 
-
-    // -----------------------------
-    // MAP ERRORS
-    // -----------------------------
+    map.on(
+      "move",
+      drawNoise
+    );
 
     map.on(
-      "error",
-      (event) => {
+      "zoom",
+      drawNoise
+    );
 
-        console.error(
-          "Map error:",
-          event.error
-        );
+    window.addEventListener(
+      "resize",
+      () => {
+        resizeNoiseCanvas();
+        drawNoise();
       }
     );
   </script>
-
 </body>
 </html>
