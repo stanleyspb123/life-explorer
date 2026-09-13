@@ -182,7 +182,7 @@
   </button>
 
   <div id="build">
-    v0.8
+    v0.9
   </div>
 
 
@@ -201,6 +201,17 @@
     const MAX_GPS_ACCURACY_METERS = 50;
     const MAX_CONNECTED_DISTANCE_METERS = 120;
     const SESSION_GAP_MS = 30 * 60 * 1000;
+
+    // Anti-spoofing: a sudden relocation must be confirmed
+    // by several mutually consistent GPS fixes before it can
+    // reveal a new part of the map.
+    const MAX_PLAUSIBLE_SPEED_MPS = 55; // ~198 km/h
+    const SUSPICIOUS_JUMP_METERS = 250;
+    const RELOCATION_CONFIRM_POINTS = 3;
+    const RELOCATION_CLUSTER_METERS = 100;
+    const RELOCATION_MIN_SPAN_MS = 3000;
+
+    let relocationCandidate = [];
 
     let sessions = loadSessions();
 
@@ -951,6 +962,82 @@
     // GPS
     // ---------------------------------
 
+    function isSuspiciousJump(lastPoint, point) {
+      if (!lastPoint) return false;
+
+      const distance = distanceMeters(lastPoint, point);
+      const dtSeconds = Math.max(
+        1,
+        (point.timestamp - lastPoint.timestamp) / 1000
+      );
+      const impliedSpeed = distance / dtSeconds;
+
+      return (
+        distance >= SUSPICIOUS_JUMP_METERS &&
+        impliedSpeed > MAX_PLAUSIBLE_SPEED_MPS
+      );
+    }
+
+
+    function candidateIsStable() {
+      if (
+        relocationCandidate.length <
+        RELOCATION_CONFIRM_POINTS
+      ) {
+        return false;
+      }
+
+      const recent = relocationCandidate.slice(
+        -RELOCATION_CONFIRM_POINTS
+      );
+      const first = recent[0];
+      const last = recent[recent.length - 1];
+
+      if (
+        last.timestamp - first.timestamp <
+        RELOCATION_MIN_SPAN_MS
+      ) {
+        return false;
+      }
+
+      return recent.every(
+        point =>
+          distanceMeters(first, point) <=
+          RELOCATION_CLUSTER_METERS
+      );
+    }
+
+
+    function acceptRelocationCandidate() {
+      const recent = relocationCandidate.slice(
+        -RELOCATION_CONFIRM_POINTS
+      );
+
+      // Never connect the old position with a newly confirmed
+      // relocation: start a clean exploration session.
+      const session = createSession(
+        recent[0].timestamp
+      );
+
+      recent.forEach(point => {
+        const previous = getLastPoint(session);
+
+        if (
+          !previous ||
+          distanceMeters(previous, point) >=
+            MIN_POINT_DISTANCE_METERS
+        ) {
+          session.points.push(point);
+        }
+      });
+
+      relocationCandidate = [];
+      saveSessions();
+
+      return getLastPoint(session);
+    }
+
+
     function handlePosition(
       position
     ) {
@@ -979,15 +1066,6 @@
         return;
       }
 
-      if (
-        shouldStartNewSession(timestamp)
-      ) {
-        createSession(timestamp);
-      }
-
-      const session =
-        getCurrentSession();
-
       const point = {
         lon: longitude,
         lat: latitude,
@@ -995,19 +1073,49 @@
         timestamp
       };
 
-      const lastPoint =
-        getLastPoint(session);
-
       if (
-        !lastPoint ||
-        distanceMeters(
-          lastPoint,
-          point
-        ) >=
-        MIN_POINT_DISTANCE_METERS
+        shouldStartNewSession(timestamp)
       ) {
-        session.points.push(point);
-        saveSessions();
+        createSession(timestamp);
+      }
+
+      let session = getCurrentSession();
+      let lastPoint = getLastPoint(session);
+
+      if (isSuspiciousJump(lastPoint, point)) {
+        relocationCandidate.push(point);
+        relocationCandidate =
+          relocationCandidate.slice(
+            -RELOCATION_CONFIRM_POINTS
+          );
+
+        if (!candidateIsStable()) {
+          showStatus(
+            `GPS нестабилен · проверяем позицию ${relocationCandidate.length}/${RELOCATION_CONFIRM_POINTS}`
+          );
+          gpsSubtitle.textContent =
+            "Проверяем позицию…";
+          return;
+        }
+
+        const confirmedPoint =
+          acceptRelocationCandidate();
+
+        session = getCurrentSession();
+        lastPoint = confirmedPoint;
+      } else {
+        // A normal fix cancels an unconfirmed relocation.
+        relocationCandidate = [];
+
+        if (
+          !lastPoint ||
+          distanceMeters(lastPoint, point) >=
+            MIN_POINT_DISTANCE_METERS
+        ) {
+          session.points.push(point);
+          saveSessions();
+          lastPoint = point;
+        }
       }
 
       startScreen.style.display =
@@ -1015,10 +1123,12 @@
 
       showActiveStatus(accuracy);
 
+      const displayPoint = lastPoint || point;
+
       map.easeTo({
         center: [
-          longitude,
-          latitude
+          displayPoint.lon,
+          displayPoint.lat
         ],
         zoom:
           Math.max(
@@ -1103,6 +1213,7 @@
         }
 
         sessions = [];
+        relocationCandidate = [];
 
         localStorage.removeItem(
           STORAGE_KEY_V1
