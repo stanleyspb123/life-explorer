@@ -179,7 +179,10 @@
       "life-explorer-points-v1";
 
     const REVEAL_RADIUS_METERS = 50;
-    const MIN_POINT_DISTANCE_METERS = 15;
+
+    // Пишем GPS чаще,
+    // чтобы след был плавнее.
+    const MIN_POINT_DISTANCE_METERS = 8;
 
     let exploredPoints = loadPoints();
 
@@ -423,6 +426,138 @@
     }
 
 
+    // -------------------------
+    // REVEAL HELPERS
+    // -------------------------
+
+    function eraseCircle(
+      x,
+      y,
+      radius
+    ) {
+
+      const gradient =
+        noiseCtx.createRadialGradient(
+          x,
+          y,
+          radius * 0.82,
+          x,
+          y,
+          radius
+        );
+
+      gradient.addColorStop(
+        0,
+        "rgba(0,0,0,1)"
+      );
+
+      gradient.addColorStop(
+        0.75,
+        "rgba(0,0,0,1)"
+      );
+
+      gradient.addColorStop(
+        1,
+        "rgba(0,0,0,0)"
+      );
+
+      noiseCtx.fillStyle =
+        gradient;
+
+      noiseCtx.beginPath();
+
+      noiseCtx.arc(
+        x,
+        y,
+        radius,
+        0,
+        Math.PI * 2
+      );
+
+      noiseCtx.fill();
+    }
+
+
+    function eraseCapsule(
+      p1,
+      p2,
+      radius
+    ) {
+
+      const dx =
+        p2.x - p1.x;
+
+      const dy =
+        p2.y - p1.y;
+
+      const length =
+        Math.sqrt(
+          dx * dx +
+          dy * dy
+        );
+
+      if (length < 1) {
+        eraseCircle(
+          p1.x,
+          p1.y,
+          radius
+        );
+
+        return;
+      }
+
+      const nx =
+        -dy / length;
+
+      const ny =
+        dx / length;
+
+      noiseCtx.beginPath();
+
+      noiseCtx.moveTo(
+        p1.x + nx * radius,
+        p1.y + ny * radius
+      );
+
+      noiseCtx.lineTo(
+        p2.x + nx * radius,
+        p2.y + ny * radius
+      );
+
+      noiseCtx.arc(
+        p2.x,
+        p2.y,
+        radius,
+        Math.atan2(ny, nx),
+        Math.atan2(-ny, -nx)
+      );
+
+      noiseCtx.lineTo(
+        p1.x - nx * radius,
+        p1.y - ny * radius
+      );
+
+      noiseCtx.arc(
+        p1.x,
+        p1.y,
+        radius,
+        Math.atan2(-ny, -nx),
+        Math.atan2(ny, nx)
+      );
+
+      noiseCtx.closePath();
+
+      noiseCtx.fillStyle =
+        "rgba(0,0,0,1)";
+
+      noiseCtx.fill();
+    }
+
+
+    // -------------------------
+    // DRAW FOG
+    // -------------------------
+
     function drawNoise() {
 
       const width =
@@ -450,8 +585,7 @@
       );
 
 
-      // Затемняем шум,
-      // чтобы он не бил по глазам
+      // Немного приглушаем шум
 
       noiseCtx.fillStyle =
         "rgba(0,0,0,0.32)";
@@ -464,20 +598,69 @@
       );
 
 
-      // Вырезаем исследованные территории
-
       noiseCtx.globalCompositeOperation =
         "destination-out";
 
 
-      exploredPoints.forEach(
-        ([longitude, latitude]) => {
+      if (
+        exploredPoints.length === 1
+      ) {
 
-          const point =
-            map.project([
-              longitude,
-              latitude
-            ]);
+        const [
+          longitude,
+          latitude
+        ] = exploredPoints[0];
+
+        const point =
+          map.project([
+            longitude,
+            latitude
+          ]);
+
+        const radius =
+          metersToPixels(
+            REVEAL_RADIUS_METERS,
+            latitude
+          );
+
+        eraseCircle(
+          point.x,
+          point.y,
+          radius
+        );
+      }
+
+
+      if (
+        exploredPoints.length >= 2
+      ) {
+
+        for (
+          let i = 1;
+          i < exploredPoints.length;
+          i++
+        ) {
+
+          const prev =
+            exploredPoints[i - 1];
+
+          const current =
+            exploredPoints[i];
+
+
+          const p1 =
+            map.project(prev);
+
+          const p2 =
+            map.project(current);
+
+
+          const latitude =
+            (
+              prev[1] +
+              current[1]
+            ) / 2;
+
 
           const radius =
             metersToPixels(
@@ -486,49 +669,29 @@
             );
 
 
-          const gradient =
-            noiseCtx.createRadialGradient(
-              point.x,
-              point.y,
-              radius * 0.82,
-              point.x,
-              point.y,
-              radius
-            );
-
-
-          gradient.addColorStop(
-            0,
-            "rgba(0,0,0,1)"
-          );
-
-          gradient.addColorStop(
-            0.75,
-            "rgba(0,0,0,1)"
-          );
-
-          gradient.addColorStop(
-            1,
-            "rgba(0,0,0,0)"
+          eraseCapsule(
+            p1,
+            p2,
+            radius
           );
 
 
-          noiseCtx.fillStyle =
-            gradient;
+          // Круги по краям помогают
+          // сделать переходы мягче
 
-          noiseCtx.beginPath();
-
-          noiseCtx.arc(
-            point.x,
-            point.y,
-            radius,
-            0,
-            Math.PI * 2
+          eraseCircle(
+            p1.x,
+            p1.y,
+            radius
           );
 
-          noiseCtx.fill();
+          eraseCircle(
+            p2.x,
+            p2.y,
+            radius
+          );
         }
-      );
+      }
 
 
       noiseCtx.globalCompositeOperation =
@@ -555,111 +718,89 @@
       });
 
 
-    // Сам контрол не показываем.
-    // Используем его логику через нашу кнопку.
+    function handlePosition(
+      position
+    ) {
 
-    geolocate.on(
-      "geolocate",
-      event => {
+      const latitude =
+        position.coords.latitude;
 
-        const latitude =
-          event.coords.latitude;
+      const longitude =
+        position.coords.longitude;
 
-        const longitude =
-          event.coords.longitude;
-
-        const accuracy =
-          event.coords.accuracy;
+      const accuracy =
+        position.coords.accuracy;
 
 
-        const point = [
-          longitude,
-          latitude
+      const point = [
+        longitude,
+        latitude
+      ];
+
+
+      const lastPoint =
+        exploredPoints[
+          exploredPoints.length - 1
         ];
 
 
-        const lastPoint =
-          exploredPoints[
-            exploredPoints.length - 1
-          ];
+      if (
+        !lastPoint ||
+        distanceMeters(
+          lastPoint,
+          point
+        ) >=
+        MIN_POINT_DISTANCE_METERS
+      ) {
 
-
-        if (
-          !lastPoint ||
-          distanceMeters(
-            lastPoint,
-            point
-          ) >=
-          MIN_POINT_DISTANCE_METERS
-        ) {
-
-          exploredPoints.push(
-            point
-          );
-
-          savePoints();
-        }
-
-
-        startScreen.style.display =
-          "none";
-
-
-        statusEl.classList.add(
-          "visible"
+        exploredPoints.push(
+          point
         );
 
-
-        statusEl.textContent =
-          `Исследовано: ${exploredPoints.length} · GPS ±${Math.round(accuracy)} м`;
-
-
-        map.easeTo({
-
-          center: [
-            longitude,
-            latitude
-          ],
-
-          zoom:
-            Math.max(
-              map.getZoom(),
-              16.5
-            ),
-
-          duration: 900
-        });
-
-
-        drawNoise();
+        savePoints();
       }
-    );
 
 
-    geolocate.on(
-      "error",
-      error => {
+      startScreen.style.display =
+        "none";
 
-        statusEl.classList.add(
-          "visible"
-        );
 
-        statusEl.textContent =
-          "Не удалось получить GPS";
+      statusEl.classList.add(
+        "visible"
+      );
 
-        startGps.disabled = false;
 
-        startGps.querySelector(
-          "#gps-subtitle"
-        ).textContent =
-          "Попробовать ещё раз";
-      }
-    );
+      statusEl.textContent =
+        `GPS ±${Math.round(accuracy)} м`;
+
+
+      map.easeTo({
+
+        center: [
+          longitude,
+          latitude
+        ],
+
+        zoom:
+          Math.max(
+            map.getZoom(),
+            16.5
+          ),
+
+        duration: 700
+      });
+
+
+      drawNoise();
+    }
 
 
     // -------------------------
     // BIG GPS BUTTON
     // -------------------------
+
+    let watchId = null;
+
 
     startGps.addEventListener(
       "click",
@@ -690,35 +831,34 @@
         }
 
 
-        navigator.geolocation.watchPosition(
+        watchId =
+          navigator.geolocation.watchPosition(
 
-          position => {
+            handlePosition,
 
-            const event = {
-              coords:
-                position.coords
-            };
+            error => {
 
-            geolocate.fire(
-              "geolocate",
-              event
-            );
-          },
+              statusEl.classList.add(
+                "visible"
+              );
 
-          error => {
+              statusEl.textContent =
+                "Не удалось получить GPS";
 
-            geolocate.fire(
-              "error",
-              error
-            );
-          },
+              startGps.disabled = false;
 
-          {
-            enableHighAccuracy: true,
-            maximumAge: 3000,
-            timeout: 15000
-          }
-        );
+              document.getElementById(
+                "gps-subtitle"
+              ).textContent =
+                "Попробовать ещё раз";
+            },
+
+            {
+              enableHighAccuracy: true,
+              maximumAge: 2000,
+              timeout: 15000
+            }
+          );
       }
     );
 
