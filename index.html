@@ -71,6 +71,24 @@
       "bottom-right"
     );
 
+    const geolocate = new maplibregl.GeolocateControl({
+      positionOptions: {
+        enableHighAccuracy: true
+      },
+      trackUserLocation: true,
+      showUserHeading: true
+    });
+
+    map.addControl(geolocate, "bottom-right");
+
+    geolocate.on("geolocate", (event) => {
+      const latitude = event.coords.latitude;
+      const longitude = event.coords.longitude;
+
+      document.getElementById("status").textContent =
+        `GPS: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+    });
+
     map.on("load", () => {
       document.getElementById("status").textContent =
         "Карта загружена ✓";
