@@ -69,8 +69,18 @@
     map.on("error", (event) => {
       console.error("Map error:", event.error);
 
-      document.getElementById("status").textContent =
-        "Ошибка загрузки карты";
+      const errorText =
+        event?.error?.message ||
+        event?.error?.statusText ||
+        String(event?.error || "Unknown error");
+
+      const status = document.getElementById("status");
+
+      status.textContent = "MAP ERROR: " + errorText;
+      status.style.whiteSpace = "normal";
+      status.style.maxWidth = "85vw";
+      status.style.textAlign = "center";
+      status.style.fontSize = "12px";
     });
 
     map.addControl(
