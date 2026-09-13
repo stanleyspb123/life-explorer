@@ -56,6 +56,24 @@
   <script src="https://unpkg.com/maplibre-gl@5.7.1/dist/maplibre-gl.js"></script>
 
   <script>
+    const status = document.getElementById("status");
+
+    fetch("https://tiles.openfreemap.org/styles/positron")
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(() => {
+        status.textContent = "STYLE OK";
+        status.style.background = "#167a3e";
+      })
+      .catch(error => {
+        status.textContent = `STYLE ERROR: ${error.message}`;
+        status.style.background = "#b42318";
+      });
+
     const map = new maplibregl.Map({
       container: "map",
 
