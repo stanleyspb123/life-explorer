@@ -67,7 +67,7 @@
       display: block;
     }
 
-    #reset {
+    #stats-button {
       position: absolute;
       top: max(18px, env(safe-area-inset-top));
       right: 14px;
@@ -75,12 +75,106 @@
 
       border: 0;
       border-radius: 18px;
-
       padding: 10px 13px;
 
       background: rgba(10,10,10,0.9);
       color: white;
+      font-size: 13px;
+    }
 
+    #stats-panel {
+      position: absolute;
+      inset: 0;
+      z-index: 40;
+      display: none;
+      align-items: flex-end;
+      justify-content: center;
+      background: rgba(0,0,0,0.45);
+      padding: 14px;
+      box-sizing: border-box;
+    }
+
+    #stats-panel.visible {
+      display: flex;
+    }
+
+    #stats-card {
+      width: min(520px, 100%);
+      max-height: 82vh;
+      overflow: auto;
+      box-sizing: border-box;
+      padding: 22px;
+      border-radius: 28px;
+      background: rgba(12,12,12,0.97);
+      color: white;
+      box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+    }
+
+    #stats-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    #stats-header h2 {
+      margin: 0;
+      font-size: 22px;
+    }
+
+    #stats-close {
+      width: 38px;
+      height: 38px;
+      border: 0;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.1);
+      color: white;
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    #stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .stat-item {
+      min-height: 88px;
+      padding: 14px;
+      box-sizing: border-box;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.07);
+    }
+
+    .stat-value {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: rgba(255,255,255,0.62);
+    }
+
+    #stats-note {
+      margin: 14px 2px 0;
+      color: rgba(255,255,255,0.48);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    #reset {
+      width: 100%;
+      margin-top: 18px;
+      border: 0;
+      border-radius: 18px;
+      padding: 13px 16px;
+      background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.72);
       font-size: 13px;
     }
 
@@ -177,12 +271,51 @@
     </button>
   </div>
 
-  <button id="reset">
-    Сбросить
+  <button id="stats-button">
+    Статистика
   </button>
 
+  <div id="stats-panel">
+    <div id="stats-card">
+      <div id="stats-header">
+        <h2>Исследование</h2>
+        <button id="stats-close" aria-label="Закрыть">×</button>
+      </div>
+
+      <div id="stats-grid">
+        <div class="stat-item">
+          <span class="stat-value" id="stats-area">0 м²</span>
+          <span class="stat-label">Исследовано</span>
+        </div>
+
+        <div class="stat-item">
+          <span class="stat-value" id="stats-distance">0 м</span>
+          <span class="stat-label">Пройдено</span>
+        </div>
+
+        <div class="stat-item">
+          <span class="stat-value" id="stats-sessions">0</span>
+          <span class="stat-label">Прогулок</span>
+        </div>
+
+        <div class="stat-item">
+          <span class="stat-value" id="stats-time">0 мин</span>
+          <span class="stat-label">В исследовании</span>
+        </div>
+      </div>
+
+      <p id="stats-note">
+        Площадь пока считается приблизительно по сетке 20 × 20 м.
+      </p>
+
+      <button id="reset">
+        Сбросить весь прогресс
+      </button>
+    </div>
+  </div>
+
   <div id="build">
-    v0.9
+    v0.10
   </div>
 
 
@@ -232,6 +365,27 @@
 
     const gpsSubtitle =
       document.getElementById("gps-subtitle");
+
+    const statsButton =
+      document.getElementById("stats-button");
+
+    const statsPanel =
+      document.getElementById("stats-panel");
+
+    const statsClose =
+      document.getElementById("stats-close");
+
+    const statsArea =
+      document.getElementById("stats-area");
+
+    const statsDistance =
+      document.getElementById("stats-distance");
+
+    const statsSessions =
+      document.getElementById("stats-sessions");
+
+    const statsTime =
+      document.getElementById("stats-time");
 
     const resetButton =
       document.getElementById("reset");
@@ -592,10 +746,16 @@
         return 0;
       }
 
+      const isActiveSession =
+        session === getCurrentSession() &&
+        watchId !== null;
+
       const end =
-        Number.isFinite(lastTimestamp)
-          ? Math.min(now, lastTimestamp)
-          : now;
+        isActiveSession
+          ? now
+          : Number.isFinite(lastTimestamp)
+            ? lastTimestamp
+            : now;
 
       return Math.max(
         0,
@@ -631,6 +791,208 @@
         minutes % 60;
 
       return `${hours} ч ${rest} мин`;
+    }
+
+
+    function totalDistanceMeters() {
+      return sessions.reduce(
+        (total, session) =>
+          total + sessionDistanceMeters(session),
+        0
+      );
+    }
+
+
+    function totalDurationMs() {
+      return sessions.reduce(
+        (total, session) =>
+          total + sessionDurationMs(session),
+        0
+      );
+    }
+
+
+    function formatArea(squareMeters) {
+      if (squareMeters < 10000) {
+        return `${Math.round(squareMeters).toLocaleString("ru-RU")} м²`;
+      }
+
+      return `${(squareMeters / 1000000).toFixed(2)} км²`;
+    }
+
+
+    function mercatorMeters(point) {
+      const R = 6378137;
+      const lonRad =
+        point.lon * Math.PI / 180;
+      const lat =
+        Math.max(-85, Math.min(85, point.lat));
+      const latRad =
+        lat * Math.PI / 180;
+
+      return {
+        x: R * lonRad,
+        y:
+          R *
+          Math.log(
+            Math.tan(
+              Math.PI / 4 +
+              latRad / 2
+            )
+          )
+      };
+    }
+
+
+    function calculateExploredAreaM2() {
+      const CELL = 20;
+      const SAMPLE_STEP = 10;
+      const cells = new Set();
+      const allPoints =
+        sessions.flatMap(
+          session => session.points
+        );
+
+      if (allPoints.length === 0) {
+        return 0;
+      }
+
+      const meanLatitude =
+        allPoints.reduce(
+          (sum, point) => sum + point.lat,
+          0
+        ) / allPoints.length;
+
+      const radiusCells =
+        Math.ceil(
+          REVEAL_RADIUS_METERS / CELL
+        );
+
+      function addReveal(point) {
+        const meters =
+          mercatorMeters(point);
+
+        const cx =
+          Math.floor(meters.x / CELL);
+        const cy =
+          Math.floor(meters.y / CELL);
+
+        for (
+          let dx = -radiusCells;
+          dx <= radiusCells;
+          dx++
+        ) {
+          for (
+            let dy = -radiusCells;
+            dy <= radiusCells;
+            dy++
+          ) {
+            const centerDistance =
+              Math.sqrt(
+                (dx * CELL) ** 2 +
+                (dy * CELL) ** 2
+              );
+
+            if (
+              centerDistance <=
+              REVEAL_RADIUS_METERS
+            ) {
+              cells.add(
+                `${cx + dx}:${cy + dy}`
+              );
+            }
+          }
+        }
+      }
+
+      sessions.forEach(session => {
+        if (session.points.length === 0) {
+          return;
+        }
+
+        session.points.forEach(addReveal);
+
+        for (
+          let i = 1;
+          i < session.points.length;
+          i++
+        ) {
+          const previous =
+            session.points[i - 1];
+          const current =
+            session.points[i];
+          const distance =
+            distanceMeters(previous, current);
+
+          if (
+            distance >
+            MAX_CONNECTED_DISTANCE_METERS
+          ) {
+            continue;
+          }
+
+          const steps =
+            Math.max(
+              1,
+              Math.ceil(
+                distance / SAMPLE_STEP
+              )
+            );
+
+          for (
+            let step = 1;
+            step < steps;
+            step++
+          ) {
+            const t =
+              step / steps;
+
+            addReveal({
+              lon:
+                previous.lon +
+                (current.lon - previous.lon) * t,
+              lat:
+                previous.lat +
+                (current.lat - previous.lat) * t
+            });
+          }
+        }
+      });
+
+      // Web Mercator растягивает площадь к полюсам.
+      // Компенсируем это для средней широты маршрутов.
+      const latitudeCorrection =
+        Math.cos(
+          meanLatitude * Math.PI / 180
+        ) ** 2;
+
+      return (
+        cells.size *
+        CELL *
+        CELL *
+        latitudeCorrection
+      );
+    }
+
+
+    function updateStatsPanel() {
+      statsArea.textContent =
+        formatArea(
+          calculateExploredAreaM2()
+        );
+
+      statsDistance.textContent =
+        formatDistance(
+          totalDistanceMeters()
+        );
+
+      statsSessions.textContent =
+        String(sessions.length);
+
+      statsTime.textContent =
+        formatDuration(
+          totalDurationMs()
+        );
     }
 
 
@@ -1197,6 +1559,41 @@
 
 
     // ---------------------------------
+    // STATS
+    // ---------------------------------
+
+    statsButton.addEventListener(
+      "click",
+      () => {
+        updateStatsPanel();
+        statsPanel.classList.add(
+          "visible"
+        );
+      }
+    );
+
+    statsClose.addEventListener(
+      "click",
+      () => {
+        statsPanel.classList.remove(
+          "visible"
+        );
+      }
+    );
+
+    statsPanel.addEventListener(
+      "click",
+      event => {
+        if (event.target === statsPanel) {
+          statsPanel.classList.remove(
+            "visible"
+          );
+        }
+      }
+    );
+
+
+    // ---------------------------------
     // RESET
     // ---------------------------------
 
@@ -1235,6 +1632,12 @@
           "Начать исследование";
 
         statusEl.classList.remove(
+          "visible"
+        );
+
+        updateStatsPanel();
+
+        statsPanel.classList.remove(
           "visible"
         );
       }
