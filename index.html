@@ -104,6 +104,93 @@
       status.style.fontSize = "12px";
     });
 
+
+    // ------------------------------
+    // FOG OF WAR
+    // ------------------------------
+
+    const REVEAL_RADIUS_METERS = 50;
+    const MIN_POINT_DISTANCE_METERS = 15;
+
+    const exploredPoints = [];
+
+    function distanceMeters(a, b) {
+      const R = 6371000;
+
+      const lat1 = a[1] * Math.PI / 180;
+      const lat2 = b[1] * Math.PI / 180;
+
+      const dLat = (b[1] - a[1]) * Math.PI / 180;
+      const dLon = (b[0] - a[0]) * Math.PI / 180;
+
+      const h =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1) *
+        Math.cos(lat2) *
+        Math.sin(dLon / 2) ** 2;
+
+      return 2 * R * Math.asin(Math.sqrt(h));
+    }
+
+    function makeCircleHole(lon, lat, radiusMeters, steps = 48) {
+      const ring = [];
+
+      const latRadius = radiusMeters / 111320;
+      const lonRadius =
+        radiusMeters /
+        (111320 * Math.cos(lat * Math.PI / 180));
+
+      for (let i = 0; i <= steps; i++) {
+        const angle = (i / steps) * Math.PI * 2;
+
+        ring.push([
+          lon + Math.cos(angle) * lonRadius,
+          lat + Math.sin(angle) * latRadius
+        ]);
+      }
+
+      // Отверстия полигона должны идти в обратном направлении.
+      return ring.reverse();
+    }
+
+    function buildFogGeoJSON() {
+      const world = [
+        [-180, -85],
+        [180, -85],
+        [180, 85],
+        [-180, 85],
+        [-180, -85]
+      ];
+
+      const holes = exploredPoints.map(([lon, lat]) =>
+        makeCircleHole(
+          lon,
+          lat,
+          REVEAL_RADIUS_METERS
+        )
+      );
+
+      return {
+        type: "Feature",
+        properties: {},
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            world,
+            ...holes
+          ]
+        }
+      };
+    }
+
+    function updateFog() {
+      const source = map.getSource("fog");
+
+      if (source) {
+        source.setData(buildFogGeoJSON());
+      }
+    }
+
     map.addControl(
       new maplibregl.NavigationControl(),
       "bottom-right"
@@ -123,13 +210,41 @@
       const latitude = event.coords.latitude;
       const longitude = event.coords.longitude;
 
+      const point = [longitude, latitude];
+
+      const lastPoint =
+        exploredPoints[exploredPoints.length - 1];
+
+      if (
+        !lastPoint ||
+        distanceMeters(lastPoint, point) >= MIN_POINT_DISTANCE_METERS
+      ) {
+        exploredPoints.push(point);
+        updateFog();
+      }
+
       document.getElementById("status").textContent =
-        `GPS: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+        `Открыто точек: ${exploredPoints.length} · GPS ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
     });
 
     map.on("load", () => {
+      map.addSource("fog", {
+        type: "geojson",
+        data: buildFogGeoJSON()
+      });
+
+      map.addLayer({
+        id: "fog-layer",
+        type: "fill",
+        source: "fog",
+        paint: {
+          "fill-color": "#07090c",
+          "fill-opacity": 0.82
+        }
+      });
+
       document.getElementById("status").textContent =
-        "Карта загружена ✓";
+        "Нажми GPS, чтобы начать исследование";
     });
   </script>
 
